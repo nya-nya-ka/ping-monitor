@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>Ping Monitor</title>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+
+<style>
+
+body{
+    margin:0;
+    background:#0f172a;
+    color:#e2e8f0;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+}
+
+/* ===== Stats ===== */
+
+.stats{
+    display:flex;
+    align-items:center;
+    gap:30px;
+    margin:25px auto;
+    width:85vw;
+}
+
+.stat{
+    background:#0f172a;
+    padding:18px 28px;
+    border-radius:12px;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,0.05);
+}
+
+.label{
+    font-size:13px;
+    color:#94a3b8;
+    margin-bottom:6px;
+}
+
+.value{
+    font-size:28px;
+    font-weight:600;
+}
+
+/* ホスト選択 */
+
+.host-select{
+    width:220px;
+    padding:12px 16px;
+    border-radius:12px;
+    background:#1e293b;
+    border:1px solid rgba(255,255,255,0.08);
+    color:#e2e8f0;
+    font-size:15px;
+    margin-left:auto;
+    cursor:pointer;
+}
+
+/* Container */
+
+.container{
+    width:85vw;
+    margin:40px auto;
+}
+
+.card{
+    background:#1e293b;
+    border-radius:14px;
+    padding:25px;
+}
+
+#chartContainer{
+    width:100%;
+    height:65vh;
+}
+
+/* Slider */
+
+.slider-box{
+    margin-bottom:20px;
+}
+
+#timeSlider{
+    width:100%;
+    height:6px;
+    border-radius:10px;
+    background:linear-gradient(to right,#64748b,#94a3b8);
+    -webkit-appearance:none;
+}
+
+/* thumb */
+
+#timeSlider::-webkit-slider-thumb{
+    -webkit-appearance:none;
+    width:18px;
+    height:18px;
+    border-radius:50%;
+    background:#f59e0b;
+    cursor:pointer;
+}
+
+</style>
+</head>
+
+<body>
+
+<div class="stats">
+
+<div class="stat">
+<div class="label">RTT</div>
+<div class="value" id="currentRtt">Loading...</div>
+</div>
+
+<div class="stat">
+<div class="label">Packet Loss</div>
+<div class="value" id="currentLoss">Loading...</div>
+</div>
+
+<select id="hostSelector" class="host-select">
+<option value="google.com">Google</option>
+<option value="yahoo.co.jp">Yahoo</option>
+</select>
+
+</div>
+
+<div class="container">
+
+<h2>Ping Monitor</h2>
+
+<div class="card">
+
+<div class="slider-box">
+<input type="range" id="timeSlider" min="0" max="100" value="100">
+</div>
+
+<div id="chartContainer">
+<canvas id="myChart"></canvas>
+</div>
+
+</div>
+</div>
+
+<script>
+
+let chart;
+let fullData=[];
+
+const WINDOW_MINUTES=5;
+let CURRENT_HOST="google.com";
+
+/* Chart初期化 */
+
+function initChart(){
+
+chart=new Chart(
+document.getElementById("myChart"),
+{
+type:"line",
+
+data:{
+datasets:[
+
+{
+label:"RTT (ms)",
+data:[],
+yAxisID:'y1',
+borderColor:"#3b82f6",
+backgroundColor:"rgba(59,130,246,0.2)",
+tension:0.3,
+pointRadius:0,
+
+segment:{
+borderColor:ctx=>{
+const value=ctx.p1.parsed?.y;
+if(value>=200) return "#ef4444";
+return "#3b82f6";
+}
+}
+},
+
+{
+label:"Packet Loss (%)",
+data:[],
+yAxisID:'y2',
+borderColor:"#22c55e",
+backgroundColor:"rgba(34,197,94,0.2)",
+tension:0.3,
+pointRadius:0
+}
+
+]
+},
+
+options:{
+responsive:true,
+maintainAspectRatio:false,
+animation:{duration:400},
+
+plugins:{
+legend:{
+labels:{color:"#e2e8f0"}
+}
+},
+
+scales:{
+
+x:{
+type:'time',
+ticks:{color:"#94a3b8"},
+grid:{color:"rgba(148,163,184,0.1)"}
+},
+
+y1:{
+position:'left',
+min:0,
+max:200,
+ticks:{color:"#94a3b8"}
+},
+
+y2:{
+position:'right',
+min:0,
+max:100,
+ticks:{color:"#94a3b8"},
+grid:{drawOnChartArea:false}
+}
+
+}
+
+}
+}
+);
+}
+
+/* データ取得 */
+
+function loadData(){
+
+fetch("/history?host="+CURRENT_HOST)
+.then(res=>res.json())
+.then(data=>{
+
+const today=new Date();
+const startOfDay=new Date(
+today.getFullYear(),
+today.getMonth(),
+today.getDate()
+);
+
+fullData=data.filter(
+d=>new Date(d.timestamp)>=startOfDay
+);
+
+chart.data.datasets[0].data=
+fullData.map(d=>({x:new Date(d.timestamp),y:d.average_rtt}));
+
+chart.data.datasets[1].data=
+fullData.map(d=>({x:new Date(d.timestamp),y:d.packet_loss}));
+
+setInitialView();
+updateCurrentStats();
+updateVisualStatus();
+
+chart.update();
+
+});
+}
+
+/* 初期表示 */
+
+function setInitialView(){
+
+if(!fullData.length) return;
+
+document.getElementById("timeSlider").value=100;
+
+const firstTime=new Date(fullData[0].timestamp).getTime();
+const lastTime=new Date(fullData[fullData.length-1].timestamp).getTime();
+
+const windowSize=WINDOW_MINUTES*60*1000;
+
+chart.options.scales.x.min=Math.max(firstTime,lastTime-windowSize);
+chart.options.scales.x.max=lastTime;
+}
+
+/* スライダー */
+
+function updateView(){
+
+if(!fullData.length) return;
+
+const slider=document.getElementById("timeSlider");
+const percent=slider.value/100;
+
+const firstTime=new Date(fullData[0].timestamp).getTime();
+const lastTime=new Date(fullData[fullData.length-1].timestamp).getTime();
+
+const totalRange=lastTime-firstTime;
+const windowSize=WINDOW_MINUTES*60*1000;
+
+const viewStart=firstTime+percent*(totalRange-windowSize);
+chart.options.scales.x.min=viewStart;
+chart.options.scales.x.max=viewStart+windowSize;
+
+chart.update('none');
+}
+
+/* 現在値 */
+
+function updateCurrentStats(){
+
+if(!fullData.length) return;
+
+const latest=fullData[fullData.length-1];
+
+document.getElementById("currentRtt").textContent=
+(latest.average_rtt??"--")+" ms";
+
+document.getElementById("currentLoss").textContent=
+(latest.packet_loss??"--")+" %";
+}
+
+/* 状態表示 */
+
+function detectAnomaly(latest){
+
+if(!latest) return false;
+
+if(latest.average_rtt===null) return true;
+if(latest.packet_loss>0) return true;
+if(latest.average_rtt>=200) return true;
+
+return false;
+}
+
+function updateVisualStatus(){
+
+if(!fullData.length) return;
+
+const latest=fullData[fullData.length-1];
+
+const anomaly=detectAnomaly(latest);
+
+const rttEl=document.getElementById("currentRtt");
+
+if(anomaly){
+rttEl.style.color="#ef4444";
+}else{
+rttEl.style.color="#e2e8f0";
+}
+
+}
+
+/* イベント */
+
+document.getElementById("timeSlider")
+.addEventListener("input",updateView);
+
+document.getElementById("hostSelector")
+.addEventListener("change",function(){
+CURRENT_HOST=this.value;
+loadData();
+});
+
+/* 起動 */
+
+initChart();
+loadData();
+setInterval(loadData,10000);
+
+</script>
+
+</body>
+</html>
